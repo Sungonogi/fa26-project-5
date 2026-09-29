@@ -24,7 +24,8 @@ Examples
 import argparse
 import numpy as np
 from scipy.ndimage import gaussian_filter
-
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
@@ -41,6 +42,8 @@ def default_params():
         Vmin=20.0,       # slow-plateau speed (um/s)
         rise_c=18.0,     # O2 (%) where speed rises again
         rise_w=1.5,      # width of that rise (%)
+        body_len=0.0,    # >0: track a body of this length (um) trailing each head (visual only)
+        n_seg=10,        # body segments
         frame_dt=0.0,    # >0: store a frame (pos, O) every frame_dt seconds for animation
         sigma=100.0,     # consumption footprint of a worm (um, ~ body scale)
         o2=21.0,         # ambient O2 (%)
@@ -129,6 +132,12 @@ def simulate(p, snapshots=(), verbose=True):
     pos = rng.uniform(0, L, (n_agents, 2))
     theta = rng.uniform(0, 2 * np.pi, n_agents)
     O = np.full((N, N), p["o2"])  # percent
+    M = int(p["n_seg"]); seg = p["body_len"] / M
+    body = None
+    if p["body_len"] > 0:   # straight body trailing the head; purely cosmetic
+        e0 = np.stack([np.cos(theta), np.sin(theta)], 1)[:, None, :]
+        body = np.clip(pos[:, None, :] - np.arange(M + 1)[None, :, None] * seg * e0, 0, L)
+    frame_bodies, snap_bodies = [], {}
     if verbose:
         print(f"agents={n_agents}, grid={N}x{N}, steps={int(p['T']/dt)}")
 
@@ -141,8 +150,10 @@ def simulate(p, snapshots=(), verbose=True):
     for it in range(steps + 1):
         if fstep and it % fstep == 0:
             frames.append((it * dt, pos.copy(), O.copy()))
+            if body is not None: frame_bodies.append(body.copy())
         if it in snap_steps:
             snaps[snap_steps[it]] = (pos.copy(), O.copy())
+            if body is not None: snap_bodies[snap_steps[it]] = body.copy()
         if it == steps:
             break
 
@@ -175,11 +186,19 @@ def simulate(p, snapshots=(), verbose=True):
                 theta[lo | hi] = -theta[lo | hi]
         pos = np.clip(pos, 0, L)
 
+        if body is not None:  # each body point follows the one ahead (rope constraint)
+            body[:, 0] = pos
+            for j in range(1, M + 1):
+                d = body[:, j - 1] - body[:, j]
+                dist = np.linalg.norm(d, axis=1, keepdims=True)
+                body[:, j] += d * np.maximum(1 - seg / np.maximum(dist, 1e-9), 0)
+
         if it % int(round(10 / dt)) == 0:
             hist.append((it * dt, O.mean(), O.min(), v.mean()))
             if verbose and it % int(round(100 / dt)) == 0:
                 print(f"t={it*dt:6.0f}s  <O2>={O.mean():5.2f}%  minO2={O.min():5.2f}%  <v>={v.mean():6.1f} um/s")
-    return dict(pos=pos, O=O, snaps=snaps, frames=frames, hist=np.array(hist), N=N, params=p)
+    return dict(pos=pos, O=O, snaps=snaps, frames=frames, frame_bodies=frame_bodies,
+                snap_bodies=snap_bodies, body=body, hist=np.array(hist), N=N, params=p)
 
 
 # ----------------------------------------------------------------------------
@@ -293,21 +312,52 @@ if __name__ == "__main__":
 
 
 # ----------------------------------------------------------------------------
-# Side-by-side animation (for Jupyter: HTML(anim.to_jshtml()))
+# Worm rendering + side-by-side animation
 # ----------------------------------------------------------------------------
-def animate_runs(results, labels, show_o2=True, interval=80):
-    """results: list of simulate() outputs run with frame_dt > 0."""
+def worm_segments(body, amp=30.0, seed=0):
+    """(N, M+1, 2) body chains -> list of polylines with a light sinusoidal wiggle."""
+    N, M1, _ = body.shape
+    if amp <= 0:
+        return list(body)
+    rng = np.random.default_rng(seed)
+    ph = rng.uniform(0, 2 * np.pi, (N, 1))
+    j = np.arange(M1)[None, :]
+    t = np.gradient(body, axis=1)
+    t /= np.maximum(np.linalg.norm(t, axis=2, keepdims=True), 1e-9)
+    nrm = np.stack([-t[..., 1], t[..., 0]], -1)
+    off = amp * np.sin(2 * np.pi * 1.2 * j / (M1 - 1) + ph) * np.sin(np.pi * j / (M1 - 1)) ** 0.5
+    return list(body + off[..., None] * nrm)
+
+
+def draw_worms(ax, body, L, lw=1.4, amp=30.0, color="0.1"):
+    """Draw worms as curved bodies with a red head dot. Returns (LineCollection, head scatter)."""
+    from matplotlib.collections import LineCollection
+    lc = LineCollection(worm_segments(body, amp), colors=color, linewidths=lw, capstyle="round")
+    ax.add_collection(lc)
+    hs = ax.scatter(body[:, 0, 0], body[:, 0, 1], s=3, c="crimson", zorder=3)
+    ax.set_xlim(0, L); ax.set_ylim(0, L); ax.set_aspect("equal")
+    ax.set_xticks([]); ax.set_yticks([])
+    return lc, hs
+
+
+def animate_runs(results, labels, show_o2=True, interval=80, lw=1.4, amp=30.0):
+    """results: list of simulate() outputs run with frame_dt > 0.
+    If they were run with body_len > 0, worms are drawn as bodies, else as points."""
     from matplotlib.animation import FuncAnimation
     n = len(results)
     L = results[0]["params"]["L"]
     rows = 2 if show_o2 else 1
     fig, ax = plt.subplots(rows, n, figsize=(3.6 * n, 3.7 * rows), squeeze=False)
-    scat, ims, titles = [], [], []
+    bodies = [len(r["frame_bodies"]) > 0 for r in results]
+    arts, ims, titles = [], [], []
     for j, (res, lab) in enumerate(zip(results, labels)):
         t0, pos0, O0 = res["frames"][0]
-        ax[0, j].set_xlim(0, L); ax[0, j].set_ylim(0, L); ax[0, j].set_aspect("equal")
-        ax[0, j].set_xticks([]); ax[0, j].set_yticks([])
-        scat.append(ax[0, j].scatter(pos0[:, 0], pos0[:, 1], s=2, c="k"))
+        if bodies[j]:
+            arts.append(draw_worms(ax[0, j], res["frame_bodies"][0], L, lw, amp))
+        else:
+            ax[0, j].set_xlim(0, L); ax[0, j].set_ylim(0, L); ax[0, j].set_aspect("equal")
+            ax[0, j].set_xticks([]); ax[0, j].set_yticks([])
+            arts.append((ax[0, j].scatter(pos0[:, 0], pos0[:, 1], s=2, c="k"),))
         titles.append(ax[0, j].set_title(f"{lab}   t = 0 s"))
         if show_o2:
             ims.append(ax[1, j].imshow(O0.T, origin="lower", extent=[0, L, 0, L],
@@ -318,12 +368,17 @@ def animate_runs(results, labels, show_o2=True, interval=80):
     def update(k):
         for j, res in enumerate(results):
             t, pos, O = res["frames"][k]
-            scat[j].set_offsets(pos)
+            if bodies[j]:
+                b = res["frame_bodies"][k]
+                arts[j][0].set_segments(worm_segments(b, amp))
+                arts[j][1].set_offsets(b[:, 0])
+            else:
+                arts[j][0].set_offsets(pos)
             titles[j].set_text(f"{labels[j]}   t = {t:.0f} s")
             if show_o2:
                 ims[j].set_data(O.T)
-        return scat + ims
+        return []
 
     anim = FuncAnimation(fig, update, frames=len(results[0]["frames"]), interval=interval, blit=False)
-    plt.close(fig)  # avoid a duplicate static figure in notebooks
+    plt.close(fig)
     return anim
