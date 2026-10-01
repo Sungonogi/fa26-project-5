@@ -1,0 +1,31 @@
+{
+  "base": {
+    "mode": "density",
+    "n": 1000,
+    "seed": 4,
+    "size": 32.0,
+    "grid": 64,
+    "dt": 0.1,
+    "speed": 1.0,
+    "persistence": 8.0,
+    "sensing": 1.0,
+    "density_scale": 1.0,
+    "min_speed": 0.01,
+    "slowing": 1.5,
+    "diffusion": 1.0,
+    "replenishment": 0.08,
+    "uptake": 0.035,
+    "preferred_oxygen": 0.4,
+    "oxygen_width": 0.25,
+    "steering": 15.0,
+    "body_length": 1.0,
+    "body_points": 9
+  },
+  "seeds": [
+    4,
+    17,
+    29
+  ],
+  "duration": 3000,
+  "sample_every": 50
+}
