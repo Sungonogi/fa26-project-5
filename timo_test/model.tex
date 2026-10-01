@@ -1,0 +1,309 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\ee}{\mathrm{e}}
+\newcommand{\vect}[1]{\bm{#1}}
+\newcommand{\Oam}{O_{\mathrm{am}}}
+\newcommand{\Oeq}{O_{\mathrm{eq}}}
+\newcommand{\Weq}{W_{\mathrm{eq}}}
+\newcommand{\Ostar}{O_{\star}}
+
+\title{Oxygen-kinesis model of \textit{C.\ elegans} aggregation:\\
+from the agent-based rules to the continuum instability}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+We write down the agent-based model (run-and-tumble walkers whose speed depends on the local oxygen concentration and on the local worm density, with soft-core repulsion and an optional aerotactic bias of the tumble rate, coupled to a reaction--diffusion oxygen field). We then derive step by step (i) its coarse-grained density equation, (ii) the linear-stability condition for the uniform state including every term, and (iii) the numerical scheme. The oxygen-kinesis core follows Demir et al., \textit{eLife} \textbf{9}, e52781 (2020); the density-dependent speed, the aerotactic tumble rate and the repulsion are additions, and the continuum consequences of these additions are my own derivation and have not yet been checked against the simulation.
+\end{abstract}
+
+\section{Microscopic model}
+
+\subsection{Worms}
+Worm $i=1,\dots,N$ has position $\vect{x}_i(t)\in[0,L]^2$ and heading $\theta_i(t)$, with unit vector $\vect{e}(\theta)=(\cos\theta,\sin\theta)$. The behavioural rules are
+\begin{align}
+\dot{\vect{x}}_i &= v_i\,\vect{e}(\theta_i)+\sum_{j\neq i}\vect{f}_{ij}, \label{eq:motion}\\
+\theta_i &\to \theta'\sim\mathrm{Uniform}[0,2\pi)\quad\text{at Poisson rate }\lambda_i, \label{eq:tumble}
+\end{align}
+with three ingredients defined below: the speed $v_i$ (oxygen and density), the tumble rate $\lambda_i$ (aerotaxis), and the pair force $\vect{f}_{ij}$ (repulsion).
+
+\paragraph{Speed: oxygen kinesis and density slowing.}
+\begin{equation}
+v_i = V\!\big(O(\vect{x}_i,t)\big)\;g(\rho_i),
+\qquad
+g(\rho)=\frac{1}{1+(\rho/\rho_s)^{n}},
+\label{eq:speed}
+\end{equation}
+where $\rho_i$ is the number of neighbours within a sensing radius $r_s$, per area:
+\begin{equation}
+\rho_i=\frac{1}{\pi r_s^2}\,\#\{j\neq i:\ |\vect{x}_j-\vect{x}_i|<r_s\}.
+\label{eq:rhoi}
+\end{equation}
+Higher density therefore reduces the speed. (In the code $\rho_s$ is given in worms/mm$^2$; convert with $1~\mathrm{mm}^{-2}=10^{-6}~\mu\mathrm{m}^{-2}$.) The exponent must satisfy $n>1$ for density slowing alone to cause clustering (Section~\ref{sec:coarse}). With no density slowing, $g\equiv1$ ($\rho_s=0$ switches it off).
+
+\paragraph{Tumble rate: aerotaxis.}
+\begin{equation}
+\lambda_i=\lambda\,\min\!\Big\{\exp\!\big[-\chi\,\dot U_i\big],\ \lambda_{\max}\Big\},
+\qquad
+U(O)=-\,|O-\Ostar|,
+\label{eq:lam}
+\end{equation}
+where $\dot U_i$ is the rate of change of $U$ experienced along the worm's path, estimated by a finite difference over one time step,
+\begin{equation}
+\dot U_i\simeq\frac{U\big(O_i^{\,t}\big)-U\big(O_i^{\,t-\Delta t}\big)}{\Delta t},
+\end{equation}
+with $O_i^{\,t}$ the oxygen at the worm's position at time $t$. A worm tumbles less often when its path brings it closer to the preferred level $\Ostar\approx 8.5\%$ (npr-1 aerotaxis target, 7--10\%) and more often when it moves away. The strength $\chi$ has units s/\%. Setting $\chi=0$ recovers a constant tumble rate $\lambda$; the mean run time is then $1/\lambda$ and the run length at speed $v$ is
+\begin{equation}
+\ell=v/\lambda .
+\end{equation}
+(The paper calls the tumble rate $\tau$; I use $\lambda$ to avoid confusion with a time.)
+
+\paragraph{Repulsion.}
+Worms interact through a soft-core pair potential
+\begin{equation}
+u(r)=\begin{cases}(r-r_c)^2 & r<r_c,\\ 0 & \text{otherwise,}\end{cases}
+\qquad
+\vect{f}_{ij}=-\mu\,\nabla_{\vect{x}_i}u\big(|\vect{x}_i-\vect{x}_j|\big)=2\mu\,(r_c-r_{ij})\,\hat{\vect{r}}_{ij}\ \ (r_{ij}<r_c),
+\label{eq:pot}
+\end{equation}
+where $r_{ij}=|\vect{x}_i-\vect{x}_j|$ and $\hat{\vect{r}}_{ij}=(\vect{x}_i-\vect{x}_j)/r_{ij}$. The mobility is $\mu=1~\mathrm{s}^{-1}$ in the code, so $\vect{f}_{ij}$ is a velocity in $\mu$m/s. The force pushes $i$ away from $j$ and is applied as a displacement $\sum_j\vect{f}_{ij}\Delta t$; it does not change the speed $v_i$.
+
+\paragraph{Walls.} The walls are reflecting: a worm crossing a wall is mirrored back and the normal component of $\vect{e}$ flips.
+
+\subsection{Speed law}
+Measurements (Fig.~2b of the paper) show that npr-1 worms move fast at very low O$_2$, slow down to a plateau at intermediate O$_2$ (about 5--15\%), and speed up again above roughly 15\%. We use a sum of logistic functions $s(x)=1/(1+\ee^{-x})$, with $O$ in percent:
+\begin{equation}
+V(O)=V_{\min}+A_{\rm low}\Big[1-s\!\Big(\frac{O-3}{0.8}\Big)\Big]+A_{\rm high}\,s\!\Big(\frac{O-O_c}{w}\Big),
+\label{eq:V}
+\end{equation}
+with $A_{\rm low}=160$, $A_{\rm high}=150~\mu$m/s and $(V_{\min},O_c,w)$ tunable. The key qualitative feature is the rising branch $V'(O)>0$ at high $O$.
+
+\subsection{Oxygen field}
+Let $O(\vect{x},t)$ be the O$_2$ level on the agar surface and $\rho(\vect{x},t)$ the worm number density. Three processes act on it: lateral diffusion, replenishment from the air, and consumption by worms and the bacteria they carry. Since bacterial density was measured to be proportional to worm density, bacteria are not modelled separately:
+\begin{equation}
+\frac{\partial O}{\partial t}=D_O\nabla^2O+f\,(\Oam-O)-k_c\,\tilde\rho(\vect{x},t),
+\label{eq:oxygen}
+\end{equation}
+with no-flux walls. Here $D_O$ is the diffusion coefficient, $f$ the air-penetration rate, $\Oam$ the ambient level, and $k_c$ the consumption per unit worm density. With $O$ in percent and $\tilde\rho$ in worms/m$^2$, $k_c=100\times7.3\times10^{-10}$ in these units (the code applies the factor 100 explicitly). A worm is about 1\,mm long, so its consumption is spread over a footprint:
+\begin{equation}
+\tilde\rho=G_\sigma*\sum_{i=1}^{N}\delta(\vect{x}-\vect{x}_i),\qquad
+G_\sigma(\vect{r})=\frac{1}{2\pi\sigma^2}\ee^{-r^2/2\sigma^2},
+\label{eq:footprint}
+\end{equation}
+which is a modelling choice (not in the paper) to avoid unphysical point sinks.
+
+\paragraph{Uniform state.}
+For uniform $\rho=\Weq$, setting $\partial_tO=0$ gives
+\begin{equation}
+k_c\Weq=f(\Oam-\Oeq)\quad\Longrightarrow\quad\Oeq=\Oam-\frac{k_c\Weq}{f}.
+\label{eq:eq}
+\end{equation}
+The deficit $k_c\Weq/f$ is independent of $\Oam$ and none of the new terms change it. The screening length is $\ell_O=\sqrt{D_O/f}\approx55~\mu$m.
+
+\section{From agents to a density equation}
+\label{sec:coarse}
+
+\subsection{Kinetic equation}
+Let $F(\vect{x},\theta,t)$ be the density of worms with heading $\theta$, and $\rho=\int F\,\dd\theta$. Two simplifications are made for the coarse-graining.
+
+First, the repulsion is replaced by its mean-field velocity, common to all headings,
+\begin{equation}
+\vect{w}(\vect{x})=-\mu\,\nabla\big(u*\rho\big).
+\end{equation}
+Second, the tumble rate is expanded to first order in the aerotactic bias. Along a path, $\dot U=U'(O)\big(\partial_tO+v\,\vect{e}\cdot\nabla O\big)\simeq U'(O)\,v\,\vect{e}\cdot\nabla O$, where the explicit time derivative of $O$ is neglected, so that
+\begin{equation}
+\lambda(\theta)\simeq\lambda\,\big[1-a\,\vect{e}\cdot\nabla O\big],\qquad a=\chi\,U'(O)\,v,\qquad U'(O)=-\mathrm{sgn}(O-\Ostar).
+\end{equation}
+This needs $|a\,\nabla O|\ll1$ (weak modulation). The kinetic equation with position-dependent speed, in conservative form, is
+\begin{equation}
+\partial_tF+\nabla\!\cdot\!\big[(v\,\vect{e}+\vect{w})F\big]=-\lambda(\theta)F+\frac{1}{2\pi}\int\lambda(\theta')F(\theta')\,\dd\theta' .
+\label{eq:kinetic}
+\end{equation}
+
+\subsection{Moment hierarchy}
+Define the polarization $\vect{m}=\int\vect{e}\,F\,\dd\theta$ and the nematic tensor $Q_{ij}=\int e_ie_jF\,\dd\theta$. Integrating \eqref{eq:kinetic} over $\theta$ (the tumbling terms cancel):
+\begin{equation}
+\partial_t\rho+\nabla\!\cdot\!\big(v\,\vect{m}+\rho\,\vect{w}\big)=0 .
+\label{eq:cont}
+\end{equation}
+Multiplying by $\vect{e}$ and integrating, the gain term vanishes since $\int\vect{e}\,\dd\theta=0$, and
+\begin{equation}
+\partial_tm_i+\partial_j\big(v\,Q_{ij}\big)+\partial_j\big(w_j\,m_i\big)=-\lambda\,m_i+\lambda\,a\,Q_{ij}\,\partial_jO .
+\label{eq:mom}
+\end{equation}
+The last term comes from the aerotactic bias in the loss term, $-\int\vect{e}\,\lambda(\theta)F\,\dd\theta$.
+
+\subsection{Closure and quasi-static limit}
+The hierarchy is closed by
+\begin{enumerate}[label=(\roman*)]
+\item \emph{isotropic closure:} $Q_{ij}\simeq\tfrac12\rho\,\delta_{ij}$;
+\item \emph{quasi-static polarization:} $\partial_t\vect{m}\ll\lambda\vect{m}$, valid on times $\gg1/\lambda$;
+\item dropping $\partial_j(w_jm_i)$, which is small when the repulsive drift $|\vect{w}|$ is much smaller than the run speed $v$.
+\end{enumerate}
+Then \eqref{eq:mom} gives $\vect{m}=-\frac{1}{2\lambda}\nabla(v\rho)+\frac{a\rho}{2}\nabla O$, and the total flux $\vect{J}=v\,\vect{m}+\rho\,\vect{w}$ is
+\begin{equation}
+\vect{J}=-\frac{v}{2\lambda}\nabla(v\rho)\;+\;\frac{\chi\,U'(O)\,v^2}{2}\,\rho\,\nabla O\;-\;\mu\,\rho\,\nabla\big(u*\rho\big).
+\label{eq:flux}
+\end{equation}
+The density equation is
+\begin{equation}
+\boxed{\;\partial_t\rho=\nabla\!\cdot\!\Big[\frac{v}{2\lambda}\nabla(v\rho)\;-\;\frac{\chi U'(O)v^2}{2}\,\rho\nabla O\;+\;\mu\,\rho\,\nabla(u*\rho)\Big],\qquad v=V(O)\,g(\rho)\;}
+\label{eq:FP}
+\end{equation}
+The first term reduces to the paper's Eq.~5 when $g\equiv1$. Note that $\lambda$ cancels in the aerotactic term, so the drift speed is $\tfrac12\chi\,|U'|\,v^2|\nabla O|$ independent of $\lambda$. Validity requires spatial variations on scales much longer than the run length $\ell=v/\lambda$, and, for the density-dependent terms, much longer than $r_s$ and $r_c$ (otherwise use the Fourier-space forms in Section~\ref{sec:stab}).
+
+\subsection{Local limit: effective diffusion and aerotactic coupling}
+For $r_s,r_c$ small compared with the pattern scale, write $v=V(O)g(\rho)$ and $\Phi(\rho)=\rho\,g(\rho)$, so that $v\rho=V\Phi$. Then $\nabla(v\rho)=V\Phi'\nabla\rho+\Phi V'\nabla O$. For the repulsion, $u*\rho\simeq K\rho$ with
+\begin{equation}
+K=\int u\,\dd^2r=2\pi\int_0^{r_c}(r-r_c)^2r\,\dd r=\frac{\pi r_c^4}{6}.
+\end{equation}
+Collecting terms gives a Keller--Segel form,
+\begin{equation}
+\partial_t\rho=\nabla\!\cdot\!\big[D_{\rm eff}\,\nabla\rho\big]+\nabla\!\cdot\!\big[\beta_{\rm eff}\,\rho\,\nabla O\big],
+\label{eq:KS}
+\end{equation}
+with
+\begin{equation}
+D_{\rm eff}=\frac{v^2}{2\lambda}\big(1+s_\rho\big)+\mu K\rho,
+\qquad
+\beta_{\rm eff}=\frac{V\,V'\,g^2}{2\lambda}-\frac{\chi\,U'(O)\,v^2}{2},
+\qquad
+s_\rho\equiv\frac{\dd\ln g}{\dd\ln\rho}=-\frac{n\,x^{n}}{1+x^{n}},\ \ x=\frac{\rho}{\rho_s}.
+\label{eq:Dbeta}
+\end{equation}
+The four terms have distinct meanings:
+\begin{itemize}
+\item $(v^2/2\lambda)$ is the ordinary run-and-tumble diffusivity.
+\item $s_\rho$ makes $D_{\rm eff}$ \emph{negative} when $1+s_\rho<0$, that is, when speed decreases faster than $1/\rho$ (\emph{motility-induced phase separation}, no oxygen needed). For the Hill form this requires $x^n>1/(n-1)$: for $n=2$, $\rho>\rho_s$; for $n\le1$ it never happens because $\rho\,g(\rho)$ is then monotonically increasing.
+\item $\mu K\rho$ is positive, so repulsion always \emph{stabilizes}, limiting how dense a cluster can become. Its weight relative to the run-and-tumble term is $2\lambda\mu K\rho/v^2$, which grows as $v\to0$, so it matters most inside slow, dense clusters.
+\item $\beta_{\rm eff}>0$ drives worms toward lower $O$ (aggregation). The first part is the oxygen kinesis from the paper, with an extra $g^2$; the second is aerotaxis and is positive when $O>\Ostar$ (worms move down the gradient toward $\Ostar$) and negative when $O<\Ostar$.
+\end{itemize}
+For $g\equiv1$, $\mu=\chi=0$, this is exactly the paper's $D_W=V^2/2\lambda$ and $\beta=VV'/2\lambda$, and the steady state is $\rho\propto1/V$.
+
+\section{Linear stability of the uniform state}
+\label{sec:stab}
+
+Let $\rho=\Weq+\delta\rho$ and $O=\Oeq+\delta O$, with $(\Weq,\Oeq)$ from \eqref{eq:eq}. Denote $v_0=V(\Oeq)\,g(\Weq)$ and evaluate all coefficients at the uniform state. Because the sensing and interaction kernels are non-local, work in Fourier space, $\delta\rho,\delta O\propto\ee^{\mathrm{i}\vect{k}\cdot\vect{x}+\sigma t}$, with these transforms (in 2D, $k=|\vect{k}|$):
+\begin{align}
+\hat h(k)&=\frac{2J_1(kr_s)}{kr_s}\quad\text{(top-hat neighbour count, }\to1\text{ as }k\to0),\nonumber\\
+\tilde u(k)&=2\pi\!\int_0^{r_c}\!u(r)J_0(kr)\,r\,\dd r\quad(\to K\text{ as }k\to0),\nonumber\\
+\hat G_\sigma(k)&=\ee^{-\sigma^2k^2/2}.
+\end{align}
+
+\paragraph{Linearization.}
+The neighbour count is a spatial average, so $\delta\rho_i\to\hat h(k)\,\delta\rho$ and $\delta v=V'g\,\delta O+Vg'(\Weq)\,\hat h(k)\,\delta\rho$. Then $\delta(v\rho)=V\big[g+\Weq g'\hat h\big]\delta\rho+\Weq\,g\,V'\,\delta O$. Since $\nabla\Weq=\nabla\Oeq=0$, the terms with a gradient of a coefficient are second order, and \eqref{eq:FP} gives
+\begin{equation}
+\partial_t\delta\rho=-k^2\,D_{\rm eff}(k)\,\delta\rho-k^2\,\Weq\,\beta_{\rm eff}\,\delta O,
+\end{equation}
+with
+\begin{equation}
+D_{\rm eff}(k)=\frac{v_0^2}{2\lambda}\big[1+\hat h(k)\,s_\rho\big]+\mu\,\Weq\,\tilde u(k),
+\qquad
+\beta_{\rm eff}=\frac{V V' g^2}{2\lambda}-\frac{\chi U'(\Oeq)\,v_0^2}{2}.
+\end{equation}
+The oxygen equation \eqref{eq:oxygen}, with the footprint \eqref{eq:footprint}, linearizes to
+\begin{equation}
+\partial_t\delta O=-(D_Ok^2+f)\,\delta O-k_c\,\hat G_\sigma(k)\,\delta\rho .
+\end{equation}
+Hence
+\begin{equation}
+\sigma\begin{pmatrix}\delta\rho\\\delta O\end{pmatrix}=
+\underbrace{\begin{pmatrix}-k^2D_{\rm eff}(k) & -k^2\Weq\beta_{\rm eff}\\[3pt] -k_c\hat G_\sigma(k) & -(D_Ok^2+f)\end{pmatrix}}_{\mathsf{M}(k)}
+\begin{pmatrix}\delta\rho\\\delta O\end{pmatrix}.
+\end{equation}
+
+\paragraph{Instability condition.}
+The uniform state is unstable at wavenumber $k$ if $\det\mathsf{M}<0$ or $\mathrm{tr}\,\mathsf{M}>0$. Without density slowing, $D_{\rm eff}>0$ and $\mathrm{tr}\,\mathsf{M}<0$, so only the determinant matters:
+\begin{equation}
+D_{\rm eff}(k)\,(f+D_Ok^2)<\Weq\,\beta_{\rm eff}\,k_c\,\hat G_\sigma(k).
+\end{equation}
+Eliminating the fast oxygen mode adiabatically ($\delta O\simeq-k_c\hat G_\sigma\delta\rho/(f+D_Ok^2)$) gives the growth rate
+\begin{equation}
+\sigma(k)\simeq-k^2\Big[D_{\rm eff}(k)-\frac{\Weq\,\beta_{\rm eff}\,k_c\,\hat G_\sigma(k)}{f+D_Ok^2}\Big].
+\end{equation}
+
+\paragraph{Long-wavelength threshold.}
+As $k\to0$ ($\hat h,\hat G_\sigma\to1$, $\tilde u\to K$), and using $k_c\Weq/f=\Oam-\Oeq$, dividing by $v_0^2/2\lambda$ gives
+\begin{equation}
+\boxed{\;1+s_\rho+\frac{2\lambda\,\mu K\,\Weq}{v_0^{2}}\;<\;\big(\Oam-\Oeq\big)\Big[\frac{\dd\ln V}{\dd O}-\lambda\,\chi\,U'(\Oeq)\Big]\;}
+\label{eq:crit}
+\end{equation}
+(the left side is evaluated at $\rho=\Weq$). Each new term enters transparently:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Ingredient & Where it enters \eqref{eq:crit} & Effect\\
+\midrule
+density slowing & $s_\rho\in(-n,0)$ on the left & destabilizing when $s_\rho<-1$ (needs $n>1$)\\
+repulsion & $+2\lambda\mu K\Weq/v_0^2$ on the left & always stabilizing\\
+aerotaxis & $-\lambda\chi U'$ in the bracket & destabilizing if $\Oeq>\Ostar$, stabilizing if $\Oeq<\Ostar$\\
+footprint $\sigma$ & $\hat G_\sigma(k)$ & suppresses large $k$\\
+neighbour radius $r_s$ & $\hat h(k)$ multiplies $s_\rho$ & weakens MIPS at $k\gtrsim1/r_s$\\
+\bottomrule
+\end{tabular}
+\end{center}
+With $g\equiv1$, $\mu=\chi=0$, \eqref{eq:crit} reduces to the paper's condition, $(\Oam-\Oeq)\,\dd\ln V/\dd O>1$, independent of $\lambda$. The tumble rate now appears through two dimensionless combinations: $\lambda\chi$ (units 1/\%, comparable to $\dd\ln V/\dd O$) and $\lambda\mu K\Weq/v_0^2$.
+
+\paragraph{Consequences worth testing.}
+\begin{itemize}
+\item The density channel alone can satisfy \eqref{eq:crit} with the right-hand side zero (e.g.\ at $\Oam=1\%$), so density slowing produces clustering without oxygen, which is a different mechanism from the paper's. The ablation ``density slowing on/off'' at fixed oxygen separates the two.
+\item Since $\hat h(k)<1$ at large $k$, $D_{\rm eff}(k)$ turns positive there, so the band of unstable $k$ is bounded and $\sigma(k)$ peaks at finite $k\sim1/r_s$: the sensing radius can select a pattern scale even without the oxygen loop. This has not been verified numerically.
+\item The closed-form fastest-growing wavelength of the oxygen-only model no longer holds; find the maximum of $\sigma(k)$ numerically.
+\end{itemize}
+
+\section{What the code integrates}
+
+Each step of $\Delta t=0.1$\,s does the following, in order:
+\begin{enumerate}
+\item \textbf{Deposit and smooth.} Cloud-in-cell weights give worms per cell $n_{ab}$ on a cell-centred grid of spacing $\Delta x=50~\mu$m; a Gaussian filter of width $\sigma$ gives $\tilde\rho_{ab}=n_{ab}/\Delta x^2$ (converted to worms/m$^2$).
+\item \textbf{Oxygen} (explicit Euler, 5-point Laplacian, no-flux edges):
+\begin{equation}
+O^{t+\Delta t}=O^t+\Delta t\Big[D_O\nabla_h^2O^t+f(\Oam-O^t)-100\,k_c\tilde\rho\Big],
+\end{equation}
+clipped to $[0,100]$. Stability needs $\Delta t<\Delta x^2/(4D_O)\approx0.31$\,s.
+\item \textbf{Sense.} Interpolate $O$ bilinearly to each worm, $O_i^{\,t}$. Build a $k$-d tree of positions.
+\item \textbf{Speed.} $v_i=V(O_i^{\,t})\,g(\rho_i)$ with $\rho_i$ from the neighbour count within $r_s$ (self excluded).
+\item \textbf{Tumble rate.} $\lambda_i=\lambda\min\{\exp[-\chi\dot U_i],\lambda_{\max}\}$ with $\dot U_i$ from $O_i^{\,t}$ and the value stored at the previous step; tumble with probability $\lambda_i\Delta t$ to a uniform new heading.
+\item \textbf{Move.} $\vect{x}_i\leftarrow\vect{x}_i+\big[v_i\vect{e}(\theta_i)+\sum_j\vect{f}_{ij}\big]\Delta t$, with pair forces from the same tree (pairs with $r<r_c$), then reflect at the walls.
+\item \textbf{Bodies (visual only).} Each of $M$ body points follows the one ahead at fixed segment length; bodies do not enter any of the above.
+\end{enumerate}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llll}
+\toprule
+Symbol & Meaning & Value & Source\\
+\midrule
+$\lambda$ & tumble rate & $0.5$ s$^{-1}$ & paper\\
+$D_O$ & O$_2$ diffusion & $2\times10^{3}~\mu$m$^2$/s & paper\\
+$f$ & air penetration & $0.65$ s$^{-1}$ & paper\\
+$k_c$ & consumption & $7.3\times10^{-10}$ (O$_2$ as fraction) & paper\\
+$\sigma$ & worm footprint & $75$--$100~\mu$m & model choice\\
+$V(O)$ & speed curve & sigmoid fit & fit to Fig.~2b\\
+$r_c$, $\mu$ & repulsion range, mobility & $30~\mu$m, $1$ s$^{-1}$ & added\\
+$\rho_s$, $n$, $r_s$ & density slowing & off by default; $n=2$, $r_s=150~\mu$m & added\\
+$\chi$, $\Ostar$, $\lambda_{\max}$ & aerotaxis & off by default; $\Ostar=8.5\%$, $\lambda_{\max}=10$ & added\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Limitations}
+\begin{itemize}
+\item \textbf{Finite persistence.} The continuum result needs $\ell=v/\lambda$ much smaller than the pattern scale. For fast worms $\ell\approx300~\mu$m exceeds $\ell_O$, so the agent model can deviate from \eqref{eq:crit}. Varying $\lambda$ tests this.
+\item \textbf{Non-local kernels.} The local limit \eqref{eq:KS} assumes $r_s,r_c,\sigma$ small compared with the pattern scale. With $r_s=150~\mu$m this is not true near threshold, so use the Fourier-space forms.
+\item \textbf{Aerotaxis expansion.} The tumble-rate expansion requires $|\chi U'v\nabla O|\ll1$. The simulation uses the unexpanded exponential and a finite-difference derivative that also includes $\partial_tO$, both neglected in the derivation, and $U'$ is undefined at $O=\Ostar$.
+\item \textbf{Repulsion closure.} The mean-field drift $\vect{w}$ ignores pair correlations, which become important in dense clusters.
+\item \textbf{Two clustering routes.} Density slowing and oxygen kinesis can each cause clustering on their own, so they should be ablated separately when asking which is necessary.
+\item \textbf{Coarsening.} The model has no length-selection mechanism at late times, apart possibly from $r_s$; in the experiments the cluster width saturates, which the paper attributes to bacterial depletion. That is not included here.
+\end{itemize}
+
+\end{document}

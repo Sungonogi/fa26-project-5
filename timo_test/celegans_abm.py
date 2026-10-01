@@ -24,8 +24,6 @@ Examples
 import argparse
 import numpy as np
 from scipy.ndimage import gaussian_filter
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
@@ -57,10 +55,11 @@ def default_params():
 
 
 def V_npr1(O, Vmin=20.0, rise_c=18.0, rise_w=1.5):
+    
     """Speed (um/s) vs O2 (%), fit by eye to Fig. 2b (npr-1 on food).
     ~170 at 1%, ~20 between 5 and 15%, ~150 at 21%."""
     sig = lambda x: 1.0 / (1.0 + np.exp(-x))
-    return Vmin + 160.0 * (1.0 - sig((O - 3.0) / 0.8)) + 150.0 * sig((O - rise_c) / rise_w)
+    return 20.0 + 250.0 * (1.0 - sig((O - 1.0) / 1)) + 80 * sig((O - 8.0) / 1.2)
 
 
 def V_noRise(O):
@@ -329,18 +328,18 @@ def worm_segments(body, amp=30.0, seed=0):
     return list(body + off[..., None] * nrm)
 
 
-def draw_worms(ax, body, L, lw=1.4, amp=30.0, color="0.1"):
+def draw_worms(ax, body, L, lw=1.4, amp=30.0, color="0.1", head_s=1.0):
     """Draw worms as curved bodies with a red head dot. Returns (LineCollection, head scatter)."""
     from matplotlib.collections import LineCollection
     lc = LineCollection(worm_segments(body, amp), colors=color, linewidths=lw, capstyle="round")
     ax.add_collection(lc)
-    hs = ax.scatter(body[:, 0, 0], body[:, 0, 1], s=3, c="crimson", zorder=3)
+    hs = ax.scatter(body[:, 0, 0], body[:, 0, 1], s=head_s, c="crimson", linewidths=0, zorder=3)
     ax.set_xlim(0, L); ax.set_ylim(0, L); ax.set_aspect("equal")
     ax.set_xticks([]); ax.set_yticks([])
     return lc, hs
 
 
-def animate_runs(results, labels, show_o2=True, interval=80, lw=1.4, amp=30.0):
+def animate_runs(results, labels, show_o2=True, interval=80, lw=1.4, amp=30.0, head_s=0.5):
     """results: list of simulate() outputs run with frame_dt > 0.
     If they were run with body_len > 0, worms are drawn as bodies, else as points."""
     from matplotlib.animation import FuncAnimation
@@ -353,7 +352,7 @@ def animate_runs(results, labels, show_o2=True, interval=80, lw=1.4, amp=30.0):
     for j, (res, lab) in enumerate(zip(results, labels)):
         t0, pos0, O0 = res["frames"][0]
         if bodies[j]:
-            arts.append(draw_worms(ax[0, j], res["frame_bodies"][0], L, lw, amp))
+            arts.append(draw_worms(ax[0, j], res["frame_bodies"][0], L, lw, amp, head_s=head_s))
         else:
             ax[0, j].set_xlim(0, L); ax[0, j].set_ylim(0, L); ax[0, j].set_aspect("equal")
             ax[0, j].set_xticks([]); ax[0, j].set_yticks([])
